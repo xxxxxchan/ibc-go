@@ -83,6 +83,28 @@ type ClientState interface {
 	ZeroCustomFields() ClientState
 
 	// State verification functions
+	VerifyMembership(
+		ctx sdk.Context,
+		store sdk.KVStore,
+		cdc codec.BinaryCodec,
+		height Height,
+		delayTimePeriod uint64,
+		delayBlockPeriod uint64,
+		proof []byte,
+		path []byte,
+		value []byte,
+	) error
+
+	VerifyNonMembership(
+		ctx sdk.Context,
+		store sdk.KVStore,
+		cdc codec.BinaryCodec,
+		height Height,
+		delayTimePeriod uint64,
+		delayBlockPeriod uint64,
+		proof []byte,
+		path []byte,
+	) error
 
 	VerifyClientState(
 		store sdk.KVStore,

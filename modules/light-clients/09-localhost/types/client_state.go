@@ -338,3 +338,30 @@ func (cs ClientState) VerifyNextSequenceRecv(
 
 	return nil
 }
+
+func (cs ClientState) VerifyMembership(
+	ctx sdk.Context,
+	clientStore sdk.KVStore,
+	cdc codec.BinaryCodec,
+	height exported.Height,
+	delayTimePeriod uint64,
+	delayBlockPeriod uint64,
+	proof []byte,
+	path []byte,
+	value []byte,
+) error {
+	return nil
+}
+
+func (cs ClientState) VerifyNonMembership(
+	ctx sdk.Context,
+	clientStore sdk.KVStore,
+	cdc codec.BinaryCodec,
+	height exported.Height,
+	delayTimePeriod uint64,
+	delayBlockPeriod uint64,
+	proof []byte,
+	path []byte,
+) error {
+	return nil
+}

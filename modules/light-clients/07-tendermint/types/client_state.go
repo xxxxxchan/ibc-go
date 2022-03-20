@@ -509,33 +509,130 @@ func (cs ClientState) VerifyNextSequenceRecv(
 	return nil
 }
 
+// VerifyMembership is a generic proof verification method which verifies a proof of the existence of a value at a given CommitmentPath at the specified height.
+// The caller is expected to construct the full CommitmentPath from a CommitmentPrefix and a standardized path (as defined in ICS 24).
+func (cs ClientState) VerifyMembership(
+	ctx sdk.Context,
+	clientStore sdk.KVStore,
+	cdc codec.BinaryCodec,
+	height exported.Height,
+	delayTimePeriod uint64,
+	delayBlockPeriod uint64,
+	proof []byte,
+	path []byte,
+	value []byte,
+) error {
+	if cs.GetLatestHeight().LT(height) {
+		return sdkerrors.Wrapf(
+			sdkerrors.ErrInvalidHeight,
+			"client state height < proof height (%d < %d), please ensure the client has been updated", cs.GetLatestHeight(), height,
+		)
+	}
+
+	if err := verifyDelayPeriodPassed(ctx, clientStore, height, delayTimePeriod, delayBlockPeriod); err != nil {
+		return err
+	}
+
+	var merkleProof commitmenttypes.MerkleProof
+	if err := cdc.Unmarshal(proof, &merkleProof); err != nil {
+		return sdkerrors.Wrap(commitmenttypes.ErrInvalidProof, "failed to unmarshal proof into commitment merkle proof")
+	}
+
+	var merklePath commitmenttypes.MerklePath
+	if err := cdc.Unmarshal(path, &merklePath); err != nil {
+		return sdkerrors.Wrap(commitmenttypes.ErrInvalidProof, "failed to unmarshal path into commitment merkle path")
+	}
+
+	consensusState, err := GetConsensusState(clientStore, cdc, height)
+	if err != nil {
+		return sdkerrors.Wrap(err, "please ensure the proof was constructed against a height that exists on the client")
+	}
+
+	if err := merkleProof.VerifyMembership(cs.ProofSpecs, consensusState.GetRoot(), merklePath, value); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+// VerifyNonMembership is a generic proof verification method which verifies a proof of absence of a given CommitmentPath at the specified height.
+// The caller is expected to construct the full CommitmentPath from a CommitmentPrefix and a standardized path (as defined in ICS 24).
+func (cs ClientState) VerifyNonMembership(
+	ctx sdk.Context,
+	clientStore sdk.KVStore,
+	cdc codec.BinaryCodec,
+	height exported.Height,
+	delayTimePeriod uint64,
+	delayBlockPeriod uint64,
+	proof []byte,
+	path []byte,
+) error {
+	if cs.GetLatestHeight().LT(height) {
+		return sdkerrors.Wrapf(
+			sdkerrors.ErrInvalidHeight,
+			"client state height < proof height (%d < %d), please ensure the client has been updated", cs.GetLatestHeight(), height,
+		)
+	}
+
+	if err := verifyDelayPeriodPassed(ctx, clientStore, height, delayTimePeriod, delayBlockPeriod); err != nil {
+		return err
+	}
+
+	var merkleProof commitmenttypes.MerkleProof
+	if err := cdc.Unmarshal(proof, &merkleProof); err != nil {
+		return sdkerrors.Wrap(commitmenttypes.ErrInvalidProof, "failed to unmarshal proof into commitment merkle proof")
+	}
+
+	var merklePath commitmenttypes.MerklePath
+	if err := cdc.Unmarshal(path, &merklePath); err != nil {
+		return sdkerrors.Wrap(commitmenttypes.ErrInvalidProof, "failed to unmarshal path into commitment merkle path")
+	}
+
+	consensusState, err := GetConsensusState(clientStore, cdc, height)
+	if err != nil {
+		return sdkerrors.Wrap(err, "please ensure the proof was constructed against a height that exists on the client")
+	}
+
+	if err := merkleProof.VerifyNonMembership(cs.ProofSpecs, consensusState.GetRoot(), merklePath); err != nil {
+		return err
+	}
+
+	return nil
+}
+
 // verifyDelayPeriodPassed will ensure that at least delayTimePeriod amount of time and delayBlockPeriod number of blocks have passed
 // since consensus state was submitted before allowing verification to continue.
 func verifyDelayPeriodPassed(ctx sdk.Context, store sdk.KVStore, proofHeight exported.Height, delayTimePeriod, delayBlockPeriod uint64) error {
-	// check that executing chain's timestamp has passed consensusState's processed time + delay time period
-	processedTime, ok := GetProcessedTime(store, proofHeight)
-	if !ok {
-		return sdkerrors.Wrapf(ErrProcessedTimeNotFound, "processed time not found for height: %s", proofHeight)
+	if delayTimePeriod != 0 {
+		// check that executing chain's timestamp has passed consensusState's processed time + delay time period
+		processedTime, ok := GetProcessedTime(store, proofHeight)
+		if !ok {
+			return sdkerrors.Wrapf(ErrProcessedTimeNotFound, "processed time not found for height: %s", proofHeight)
+		}
+		currentTimestamp := uint64(ctx.BlockTime().UnixNano())
+		validTime := processedTime + delayTimePeriod
+		// NOTE: delay time period is inclusive, so if currentTimestamp is validTime, then we return no error
+		if currentTimestamp < validTime {
+			return sdkerrors.Wrapf(ErrDelayPeriodNotPassed, "cannot verify packet until time: %d, current time: %d",
+				validTime, currentTimestamp)
+		}
 	}
-	currentTimestamp := uint64(ctx.BlockTime().UnixNano())
-	validTime := processedTime + delayTimePeriod
-	// NOTE: delay time period is inclusive, so if currentTimestamp is validTime, then we return no error
-	if currentTimestamp < validTime {
-		return sdkerrors.Wrapf(ErrDelayPeriodNotPassed, "cannot verify packet until time: %d, current time: %d",
-			validTime, currentTimestamp)
+
+	if delayBlockPeriod != 0 {
+		// check that executing chain's height has passed consensusState's processed height + delay block period
+		processedHeight, ok := GetProcessedHeight(store, proofHeight)
+		if !ok {
+			return sdkerrors.Wrapf(ErrProcessedHeightNotFound, "processed height not found for height: %s", proofHeight)
+		}
+		currentHeight := clienttypes.GetSelfHeight(ctx)
+		validHeight := clienttypes.NewHeight(processedHeight.GetRevisionNumber(), processedHeight.GetRevisionHeight()+delayBlockPeriod)
+		// NOTE: delay block period is inclusive, so if currentHeight is validHeight, then we return no error
+		if currentHeight.LT(validHeight) {
+			return sdkerrors.Wrapf(ErrDelayPeriodNotPassed, "cannot verify packet until height: %s, current height: %s",
+				validHeight, currentHeight)
+		}
 	}
-	// check that executing chain's height has passed consensusState's processed height + delay block period
-	processedHeight, ok := GetProcessedHeight(store, proofHeight)
-	if !ok {
-		return sdkerrors.Wrapf(ErrProcessedHeightNotFound, "processed height not found for height: %s", proofHeight)
-	}
-	currentHeight := clienttypes.GetSelfHeight(ctx)
-	validHeight := clienttypes.NewHeight(processedHeight.GetRevisionNumber(), processedHeight.GetRevisionHeight()+delayBlockPeriod)
-	// NOTE: delay block period is inclusive, so if currentHeight is validHeight, then we return no error
-	if currentHeight.LT(validHeight) {
-		return sdkerrors.Wrapf(ErrDelayPeriodNotPassed, "cannot verify packet until height: %s, current height: %s",
-			validHeight, currentHeight)
-	}
+
 	return nil
 }
 

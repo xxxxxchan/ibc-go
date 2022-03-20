@@ -881,3 +881,75 @@ func (suite *TendermintTestSuite) TestVerifyNextSeqRecv() {
 		})
 	}
 }
+
+func (suite *TendermintTestSuite) TestVerifyMembership() {
+	var (
+		clientState      *types.ClientState
+		proof            []byte
+		delayTimePeriod  uint64
+		delayBlockPeriod uint64
+		proofHeight      exported.Height
+		prefix           commitmenttypes.MerklePrefix
+		merklePath       commitmenttypes.MerklePath
+	)
+
+	testCases := []struct {
+		name     string
+		malleate func()
+		expPass  bool
+	}{
+		{
+			"successful verification", func() {}, true,
+		},
+	}
+
+	for _, tc := range testCases {
+		tc := tc
+
+		suite.Run(tc.name, func() {
+			suite.SetupTest() // reset
+
+			// setup testing conditions
+			path := ibctesting.NewPath(suite.chainA, suite.chainB)
+			suite.coordinator.Setup(path)
+			channel := path.EndpointB.GetChannel()
+
+			var ok bool
+			clientStateI := suite.chainA.GetClientState(path.EndpointA.ClientID)
+			clientState, ok = clientStateI.(*types.ClientState)
+			suite.Require().True(ok)
+
+			prefix = suite.chainB.GetPrefix()
+
+			// make channel proof
+			channelKey := host.ChannelKey(path.EndpointB.ChannelConfig.PortID, path.EndpointB.ChannelID)
+			proof, proofHeight = suite.chainB.QueryProof(channelKey)
+
+			tc.malleate() // make changes as necessary
+
+			store := suite.chainA.App.GetIBCKeeper().ClientKeeper.ClientStore(suite.chainA.GetContext(), path.EndpointA.ClientID)
+
+			// make generic and malleate?
+			merklePath = commitmenttypes.NewMerklePath(host.ChannelPath(path.EndpointB.ChannelConfig.PortID, path.EndpointB.ChannelID))
+			prefixedMerklePath, err := commitmenttypes.ApplyPrefix(prefix, merklePath)
+			suite.Require().NoError(err)
+
+			pathBz, err := suite.chainA.Codec.Marshal(&prefixedMerklePath)
+			suite.Require().NoError(err)
+
+			valueBz, err := suite.chainA.Codec.Marshal(&channel)
+			suite.Require().NoError(err)
+
+			err = clientState.VerifyMembership(
+				suite.chainA.GetContext(), store, suite.chainA.Codec, proofHeight, delayTimePeriod, delayBlockPeriod, proof,
+				pathBz, valueBz,
+			)
+
+			if tc.expPass {
+				suite.Require().NoError(err)
+			} else {
+				suite.Require().Error(err)
+			}
+		})
+	}
+}
