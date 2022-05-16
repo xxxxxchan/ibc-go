@@ -65,7 +65,7 @@ func (k Keeper) TimeoutPacket(
 	if err != nil {
 		return err
 	}
-
+	//检查时间有没有超过 限定的最高高度
 	timeoutHeight := packet.GetTimeoutHeight()
 	if (timeoutHeight.IsZero() || proofHeight.LT(timeoutHeight)) &&
 		(packet.GetTimeoutTimestamp() == 0 || proofTimestamp < packet.GetTimeoutTimestamp()) {
